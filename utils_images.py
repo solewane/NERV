@@ -38,6 +38,8 @@ def Resample(image, ori_spacing, new_spacing=1., interp_order=0):
 
 def Dilate3D(image, ori_spacing, new_resolution):
     '''
+    !!!EQUIVALENT TO  utils_transforms.RandomBinaryOperatorTransform!!!
+
     dilate the mask from old resolution[ori_spacing] to new resolution,
     to prevent label diminishing
 
@@ -112,18 +114,28 @@ if __name__ == '__main__':
     resample -> dilate
     dilate -> resample
     '''
+    from utils_transforms import RandomBinaryOperatorTransform
+
+    RandomBinaryOperatorTransform = RandomBinaryOperatorTransform(p_per_sample=1,
+                                                                  strel_size=1)
+
     save_csv_path = Path(r'data.csv')
     a = GetDataEDAfromCSV(save_csv_path)
     img_ori, ori_spacing = GetOrignalPixels(a[1])
     b = GetLabelMask(a[1], img_ori.shape)
     time1 = time.time()
-    b_dilate = Dilate3D(b, ori_spacing, 1.)
-    b_dilate, real_new_spacing = Resample(b_dilate, ori_spacing, new_spacing=1., interp_order=0)
+    # b_dilate = Dilate3D(b, ori_spacing, 1.)
+    # b_dilate, real_new_spacing = Resample(b_dilate, ori_spacing, new_spacing=1., interp_order=0)
     time2 = time.time()
     img_0, real_new_spacing = Resample(b, ori_spacing, new_spacing=1., interp_order=0)
-    img_0 = Dilate3DUsingCubicKernel(img_0, 1., 1.)
+    b_dilate = RandomBinaryOperatorTransform(img_0)
+    # img_0 = Dilate3DUsingCubicKernel(img_0, 1., 1.)
+    img_0 = Dilate3D(img_0, 1., 1.)
+
     time3 = time.time()
     print('resample -> dilate : {:.2f}s, dilate -> resample: {:.2f}s'.format(time3-time2, time2-time1))
+    print(img_0.sum())
+    print(b_dilate.sum())
     plt.figure()
 
     plt.subplot(221)

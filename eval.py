@@ -24,7 +24,7 @@ def Outline(image, mask, color):
     return image
 
 
-def OutlineResults(image, pred, label, threshold=0.9):
+def OutlineResults(image, pred, label, threshold=0.8):
     '''
     visualization, red : prediction , green : true label
     Args:
