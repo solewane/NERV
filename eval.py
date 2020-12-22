@@ -1,6 +1,7 @@
+
 import torch
 import numpy as np
-
+from collections import OrderedDict
 
 def Outline(image, mask, color):
     '''
@@ -53,3 +54,6 @@ def OutlineResults(image, pred, label, threshold=0.8):
             image[max(0, y):y + 1, max(0, x):x + 1, 1] = 1
 
     return image
+
+if __name__ == '__main__':
+    print('sss')
