@@ -15,6 +15,7 @@ import time
 from collections import OrderedDict
 from utils_transforms import Normalize
 from utils_images import PadNDImamge, GetStepsForSlidingWindow, GetGaussianWeight
+from eval import TestThreshold, CalDiceScore
 
 
 def ThrowDice(seed):
@@ -106,7 +107,7 @@ def Pred3DTiled(net, data_list,
         img_fullsize = norm_method(img_fullsize, min_ctnum, max_ctnum)
         img_fullsize = img_fullsize * 2 - 1
         img_fullsize = PadNDImamge(img_fullsize, patch_size)
-        lbl_fullsize = PadNDImamge(lbl_fullsize, patch_size)
+        lbl_fullsize, slicer = PadNDImamge(lbl_fullsize, patch_size, return_slicer=True)
         img_fullsize = torch.from_numpy(img_fullsize)
         lbl_fullsize = torch.from_numpy(lbl_fullsize)
         weight_fullsize = np.zeros(lbl_fullsize.shape)
@@ -129,11 +130,12 @@ def Pred3DTiled(net, data_list,
                     pred_fullsize[lb_z:ub_z, lb_x:ub_x, lb_y:ub_y] += predicted_patch * weight
         pred_fullsize = pred_fullsize / weight_fullsize
 
-        dice_result_fullsize = round(1 - criterion(torch.from_numpy(pred_fullsize), lbl_fullsize).item(), 3)
+        dice_result_fullsize = round(1 - criterion(torch.from_numpy(pred_fullsize).unsqueeze(0), lbl_fullsize.unsqueeze(0)).item(), 3)
         print(dice_result_fullsize)
+        # print(CalDiceScore(pred_fullsize, lbl_fullsize.numpy()))
         dice_result.append(dice_result_fullsize)
         if is_save:
-            np.save(data_list[idx][1].parent.joinpath(save_name), pred_fullsize)
+            np.save(data_list[idx][1].parent.joinpath(save_name), pred_fullsize[slicer])
             # print(data_list[idx][1].parent.joinpath(save_name))
     return dice_result
 
@@ -146,7 +148,8 @@ def main_train():
     torch.backends.cudnn.benchmark = True  # pre GPU optimization
     save_csv_path = Path(r'data.csv')
     img_name = '1mm.npy'
-    lbl_name = '1mm_mask_no_dilate.npy'
+    # lbl_name = '1mm_mask_no_dilate.npy'
+    lbl_name = '1mm_mask.npy'
     epoch_total = 3000
     init_lr = 0.01
     save_freq = 500
@@ -171,7 +174,7 @@ def main_train():
                                             is_scale=True,
                                             p_scale=0.2,
                                             scale_range=(0.8, 1.25),
-                                            is_morphology=True,
+                                            is_morphology=False,
                                             p_morphology=0.3,
                                             )
     val_dataset = CoarseResolutionDataset(pair_list=data_list_val,
@@ -523,12 +526,15 @@ def main_val():
 
 if __name__ == '__main__':
     # a, b = main_val()
+    '''
+    train
+    '''
     main_train()
     '''
     valid_tiled
     '''
     #
-    # fname = r'/home/zhangyunxu/NERV/save/1/epoch1000_CE0.0113_Dice0.3415.model'
+    # fname = r'/home/zhangyunxu/NERV/save/2/epoch500_CE0.0098_Dice0.3771.model'
     # net = nnunet.Generic_UNet(input_channels=1, base_num_features=nnunet.Generic_UNet.BASE_NUM_FEATURES_3D,
     #                           num_classes=1, num_pool=5, num_conv_per_stage=2,
     #                           feat_map_mul_on_downscale=2, conv_op=nn.Conv3d,
@@ -551,11 +557,34 @@ if __name__ == '__main__':
     # csv_info = GetDataEDAfromCSV(save_csv_path)
     # data_list_all = [[Path(i['Path']).joinpath(img_name), Path(i['Path']).joinpath(lbl_name)] for i in csv_info]
     # K_Folder = KFoldSplit(data_list_all)
-    # data_list = K_Folder[1]['train']  # k folder
-    # data_list_val = K_Folder[1]['val']
+    # data_list = K_Folder[2]['train']  # k folder
+    # data_list_val = K_Folder[2]['val']
     # # data list
     #
     # result = Pred3DTiled(net, data_list_val,
     #                      step_size=0.5, patch_size=(128, 128, 128), min_ctnum=-1000, max_ctnum=2200,
     #                      use_gaussian_weight=True, sigma_scale=1./8)
+    # print('mean value')
+    # print(np.array(result).mean())
+    # # threshold
+    # pred_name = 'label_pred.npy'
+    # label_list = [i[1] for i in data_list_val]
+    # pred_list = [i.parent.joinpath(pred_name) for i in label_list]
+    # pred_result = TestThreshold(label_list, pred_list, threshold_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
     #
+    # print(np.round(np.array(pred_result).mean(0), 3))
+
+    '''
+    test threshold of pred 
+    '''
+    # save_csv_path = Path(r'data.csv')
+    # img_name = '1mm.npy'
+    # lbl_name = '1mm_mask_no_dilate.npy'
+    # csv_info = GetDataEDAfromCSV(save_csv_path)
+    # data_list_all = [[Path(i['Path']).joinpath(img_name), Path(i['Path']).joinpath(lbl_name)] for i in csv_info]
+    # K_Folder = KFoldSplit(data_list_all)
+    # data_list_val = K_Folder[1]['val']
+    # pred_name = 'label_pred.npy'
+    # label_list = [i[1] for i in data_list_val]
+    # pred_list = [i.parent.joinpath(pred_name) for i in label_list]
+    # pred_result = TestThreshold(label_list, pred_list, threshold_list=[0.5, 0.6, 0.7, 0.8, 0.9])

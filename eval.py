@@ -55,5 +55,35 @@ def OutlineResults(image, pred, label, threshold=0.8):
 
     return image
 
+
+def CalDiceScore(label, pred, threshold=0.5):
+    assert label.shape == pred.shape, print('the shape should match')
+    epsilon = 1
+    pred_copy = pred.copy()
+    pred_copy[pred_copy >= threshold] = 1
+    pred_copy[pred_copy < threshold] = 0
+    numerator = 2 * (label * pred_copy).sum()
+    denominator = label.sum() + pred_copy.sum() + epsilon
+    return numerator / denominator
+
+
+def TestThreshold(label_path, pred_path, threshold_list=[0.5, 0.6, 0.7, 0.8, 0.9], ndigits=3):
+    assert len(label_path) == len(pred_path), 'the length should match'
+    dice_all = []
+    for idx in range(len(label_path)):
+        label = np.load(label_path[idx])
+        pred = np.load(pred_path[idx])
+        assert label.shape == pred.shape, 'the shape should match'
+        dice_sample = []
+        for threshold in threshold_list:
+            tmp = CalDiceScore(label, pred, threshold=threshold)
+            dice_sample.append(round(tmp, ndigits=ndigits))
+        dice_all.append(dice_sample)
+    return dice_all
+
+
+
+
+
 if __name__ == '__main__':
     print('sss')

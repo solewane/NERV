@@ -199,6 +199,7 @@ def GetGaussianWeight(patch_size, sigma_scale=1./4) -> np.ndarray:
 
 
 
+
 if __name__ == '__main__':
     # save_csv_path = Path(r'data.csv')
     # a = GetDataEDAfromCSV(save_csv_path)
@@ -280,9 +281,10 @@ if __name__ == '__main__':
     # print(img_in.shape)
     # print(img_out.shape)
     # c = GetStepsForSlidingWindow((128, 128, 128), lbl_out.shape, 0.5)
+    '''
 
-    a= GetGaussianWeight((128, 128, 128))
-
+    # a= GetGaussianWeight((128, 128, 128))
+    '''
     # b = GetLabelMask(a[1], img_ori.shape)
     # plt.figure()
     # plt.subplot(221)
