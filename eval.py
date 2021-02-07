@@ -2,6 +2,7 @@
 import torch
 import numpy as np
 from collections import OrderedDict
+from scipy.ndimage import distance_transform_edt as distance
 
 def Outline(image, mask, color):
     '''
@@ -62,9 +63,16 @@ def CalDiceScore(label, pred, threshold=0.5):
     pred_copy = pred.copy()
     pred_copy[pred_copy >= threshold] = 1
     pred_copy[pred_copy < threshold] = 0
-    numerator = 2 * (label * pred_copy).sum()
+    map_TP = label * pred_copy
+    FP = (pred - map_TP).sum()
+    FN = (label - map_TP).sum()
+    TP = map_TP.sum()
+    precision = round(TP / (TP + FP), ndigits=3)
+    recall = round(TP / (TP + FN), ndigits=3)
+    numerator = 2 * TP
     denominator = label.sum() + pred_copy.sum() + epsilon
-    return numerator / denominator
+    dice_score = round(numerator / denominator, ndigits=3)
+    return dice_score, int(TP), precision, recall
 
 
 def TestThreshold(label_path, pred_path, threshold_list=[0.5, 0.6, 0.7, 0.8, 0.9], ndigits=3):
@@ -82,8 +90,37 @@ def TestThreshold(label_path, pred_path, threshold_list=[0.5, 0.6, 0.7, 0.8, 0.9
     return dice_all
 
 
+def CalBoundaryScore(label, pred, threshold=0.5):
+    '''
+    customize metric
+    distance map
+    '''
+    assert label.shape == pred.shape
+    pred_copy = pred.copy()
+    pred_copy[pred_copy >= threshold] = 1
+    pred_copy[pred_copy < threshold] = 0
+    dismap = distance(1 - label)
+    boundary_FP = round((dismap * pred_copy).sum())
+    dismap = distance(label)
+    boundary_FN = round((dismap * (1 - pred_copy)).sum())
+    return boundary_FP, boundary_FN
 
 
 
 if __name__ == '__main__':
     print('sss')
+    label = np.array([[[0, 0, 0, 0, 0, 0, 0],
+                      [0, 1, 1, 1, 0, 0, 0],
+                      [0, 1, 1, 1, 0, 0, 0],
+                      [0, 1, 1, 1, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0]]])
+
+
+    pred = np.array([[[0, 0, 0, 0, 0, 0, 0],
+                            [0, 1, 1, 1, 1, 1, 0],
+                            [0, 1, 1, 0, 0, 0, 0],
+                            [0, 0, 0, 0, 0, 0, 0],
+                            [0, 0, 0, 0, 0, 0, 1]]])
+
+    a, b, c, d = CalDiceScore(label, pred)
+    e, f = CalBoundaryScore(label, pred)

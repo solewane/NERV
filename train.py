@@ -15,7 +15,9 @@ import time
 from collections import OrderedDict
 from utils_transforms import Normalize
 from utils_images import PadNDImamge, GetStepsForSlidingWindow, GetGaussianWeight
-from eval import TestThreshold, CalDiceScore
+from eval import TestThreshold, CalDiceScore, CalBoundaryScore
+from loss_function import ComputeBinaryDistance, BinaryBoundaryLoss
+from utils_visualization import VisResult
 
 
 def ThrowDice(seed):
@@ -89,10 +91,17 @@ def Pred3DTiled(net, data_list,
                 min_ctnum=-1000, max_ctnum=2200,
                 use_gaussian_weight=True, sigma_scale=1. /8,
                 is_save=True, save_name='label_pred.npy'):
-    dice_result = []
+    dice_result_list = []
+    precison_list = []
+    recall_list = []
+    label_voxel_list = []
+    bd_fp_list = []
+    bd_fn_list = []
+    bd_all_list = []
     ThrowDice(24)
     device = torch.device('cuda')
     net.to(device)
+    net.eval()
     torch.backends.cudnn.benchmark = True  # pre GPU optimization
     criterion = models.BinaryDiceLoss()
     if use_gaussian_weight:
@@ -130,14 +139,33 @@ def Pred3DTiled(net, data_list,
                     pred_fullsize[lb_z:ub_z, lb_x:ub_x, lb_y:ub_y] += predicted_patch * weight
         pred_fullsize = pred_fullsize / weight_fullsize
 
-        dice_result_fullsize = round(1 - criterion(torch.from_numpy(pred_fullsize).unsqueeze(0), lbl_fullsize.unsqueeze(0)).item(), 3)
-        print(dice_result_fullsize)
+        dice_score, _, precision, recall = CalDiceScore(lbl_fullsize.numpy(), pred_fullsize)
+        bd_fp, bd_fn = CalBoundaryScore(lbl_fullsize.numpy(), pred_fullsize)
+        # dice_result_fullsize = round(1 - criterion(torch.from_numpy(pred_fullsize).unsqueeze(0), lbl_fullsize.unsqueeze(0)).item(), 3)
+        # print(dice_result_fullsize)
         # print(CalDiceScore(pred_fullsize, lbl_fullsize.numpy()))
-        dice_result.append(dice_result_fullsize)
+        dice_result_list.append(dice_score)
+        precison_list.append(precision)
+        recall_list.append(recall)
+        label_voxel_list.append(lbl_fullsize.sum())
+        bd_fp_list.append(bd_fp)
+        bd_fn_list.append(bd_fn)
+        bd_all_list.append(bd_fp + bd_fn)
+        '''
+        visualization
+        pred & label shape is the shape after padding
+        '''
+        img_fullsize = np.load(data_list[idx][0]).astype(np.float32)
+        # print('img shape:', img_fullsize.shape)
+        # print('pred shape:', pred_fullsize.shape)
+        # print('lbl shape:', lbl_fullsize.numpy().shape)
+        pred_fullsize[pred_fullsize > 0.5] = 1
+        pred_fullsize[pred_fullsize <= 0.5] = 0
+        VisResult(pred_fullsize[slicer], lbl_fullsize.numpy()[slicer], img_fullsize)
         if is_save:
             np.save(data_list[idx][1].parent.joinpath(save_name), pred_fullsize[slicer])
             # print(data_list[idx][1].parent.joinpath(save_name))
-    return dice_result
+    return dice_result_list, label_voxel_list, precison_list, recall_list, bd_fp_list, bd_fn_list, bd_all_list
 
 
 def main_train():
@@ -150,7 +178,9 @@ def main_train():
     img_name = '1mm.npy'
     # lbl_name = '1mm_mask_no_dilate.npy'
     lbl_name = '1mm_mask.npy'
+    # lbl_name = '1mm_mask_closing_kernel3.npy'
     epoch_total = 3000
+    alpha = 1 #boundary loss + dice loss
     init_lr = 0.01
     save_freq = 500
     writer = SummaryWriter('test_log')
@@ -197,7 +227,8 @@ def main_train():
                               num_classes=1, num_pool=5, num_conv_per_stage=2,
                               feat_map_mul_on_downscale=2, conv_op=nn.Conv3d,
                               norm_op=nn.InstanceNorm3d, norm_op_kwargs=None,
-                              dropout_op=nn.Dropout3d, dropout_op_kwargs=None,
+                              dropout_op=nn.Dropout3d,
+                              dropout_op_kwargs=None,
                               nonlin=nn.LeakyReLU, nonlin_kwargs=None, deep_supervision=True,
                               dropout_in_localization=False,
                               final_nonlin=nn.Sigmoid(), weightInitializer=nnunet.InitWeights_He(1e-2),
@@ -209,6 +240,7 @@ def main_train():
     net = net.to(device)
     criterion_DICE = models.BinaryDiceLoss()
     criterion_CE = nn.BCELoss()
+    criterion_BOUNDARY = BinaryBoundaryLoss()
     optim = torch.optim.Adam(net.parameters(),
                              lr=init_lr,  # 3e-4,
                              betas=(0.9, 0.999),
@@ -259,7 +291,17 @@ def main_train():
                 loss_DICE_supervision3 = criterion_DICE(supervision3, y8)
 
                 loss_CE = loss_CE_last + 0.5 * loss_CE_supervision1 + 0.25 * loss_CE_supervision2 + 0.125 * loss_CE_supervision3
-                loss_DICE = loss_DICE_last + 0.5 * loss_DICE_supervision1 + 0.25 * loss_DICE_supervision2 + 0.125 * loss_DICE_supervision3
+                '''
+                test boundary loss start
+                '''
+                distance_map = ComputeBinaryDistance(y.to('cpu').numpy())
+                distance_map = torch.from_numpy(distance_map).to(device)
+                loss_boundary = criterion_BOUNDARY(pred, distance_map)
+                loss_DICE = alpha * (loss_DICE_last + 0.5 * loss_DICE_supervision1 + 0.25 * loss_DICE_supervision2 + 0.125 * loss_DICE_supervision3) \
+                     + (1 - alpha) * loss_boundary
+                '''
+                test boundary loss end
+                '''
                 optim.zero_grad()
                 loss_CE.backward(retain_graph=True)
                 loss_DICE.backward()
@@ -287,6 +329,10 @@ def main_train():
         loss_DICE_loss_supervision1_item_val = 0
         loss_DICE_loss_supervision2_item_val = 0
         loss_DICE_loss_supervision3_item_val = 0
+
+        alpha -= 0.001
+        if alpha < 0.001:
+            alpha = 0.001
         net.eval()
         with torch.no_grad():
             with tqdm(total=n_val, desc=f'Epoch {epoch + 1}/{epoch_total}', unit='img') as pbar_val:
@@ -529,45 +575,72 @@ if __name__ == '__main__':
     '''
     train
     '''
-    main_train()
+    # main_train()
     '''
     valid_tiled
     '''
-    #
-    # fname = r'/home/zhangyunxu/NERV/save/2/epoch500_CE0.0098_Dice0.3771.model'
-    # net = nnunet.Generic_UNet(input_channels=1, base_num_features=nnunet.Generic_UNet.BASE_NUM_FEATURES_3D,
-    #                           num_classes=1, num_pool=5, num_conv_per_stage=2,
-    #                           feat_map_mul_on_downscale=2, conv_op=nn.Conv3d,
-    #                           norm_op=nn.InstanceNorm3d, norm_op_kwargs=None,
-    #                           dropout_op=nn.Dropout3d, dropout_op_kwargs=None,
-    #                           nonlin=nn.LeakyReLU, nonlin_kwargs=None, deep_supervision=True,
-    #                           dropout_in_localization=False,
-    #                           final_nonlin=nn.Sigmoid(), weightInitializer=nnunet.InitWeights_He(1e-2),
-    #                           pool_op_kernel_sizes=None,
-    #                           conv_kernel_sizes=None,
-    #                           upscale_logits=False, convolutional_pooling=False, convolutional_upsampling=False,
-    #                           max_num_features=None, basic_block=nnunet.ConvDropoutNormNonlin,
-    #                           seg_output_use_bias=False)
-    # Load_Checkpoint(net, fname)
-    # # net
-    #
-    # save_csv_path = Path(r'data.csv')
-    # img_name = '1mm.npy'
+
+    fname = r'/home/zhangyunxu/NERV/save/epoch1000_CE0.0007_Dice0.1330.model'
+    net = nnunet.Generic_UNet(input_channels=1, base_num_features=nnunet.Generic_UNet.BASE_NUM_FEATURES_3D,
+                              num_classes=1, num_pool=5, num_conv_per_stage=2,
+                              feat_map_mul_on_downscale=2, conv_op=nn.Conv3d,
+                              norm_op=nn.InstanceNorm3d, norm_op_kwargs=None,
+                              dropout_op=nn.Dropout3d,
+                              dropout_op_kwargs=None,
+                              nonlin=nn.LeakyReLU, nonlin_kwargs=None, deep_supervision=True,
+                              dropout_in_localization=False,
+                              final_nonlin=nn.Sigmoid(), weightInitializer=nnunet.InitWeights_He(1e-2),
+                              pool_op_kernel_sizes=None,
+                              conv_kernel_sizes=None,
+                              upscale_logits=False, convolutional_pooling=False, convolutional_upsampling=False,
+                              max_num_features=None, basic_block=nnunet.ConvDropoutNormNonlin,
+                              seg_output_use_bias=False)
+    Load_Checkpoint(net, fname)
+    # net
+
+    save_csv_path = Path(r'data.csv')
+    img_name = '1mm.npy'
+    # lbl_name = '1mm_mask_closing_kernel3.npy'
+    lbl_name = '1mm_mask.npy'
     # lbl_name = '1mm_mask_no_dilate.npy'
-    # csv_info = GetDataEDAfromCSV(save_csv_path)
-    # data_list_all = [[Path(i['Path']).joinpath(img_name), Path(i['Path']).joinpath(lbl_name)] for i in csv_info]
-    # K_Folder = KFoldSplit(data_list_all)
-    # data_list = K_Folder[2]['train']  # k folder
-    # data_list_val = K_Folder[2]['val']
-    # # data list
+    csv_info = GetDataEDAfromCSV(save_csv_path)
+    data_list_all = [[Path(i['Path']).joinpath(img_name), Path(i['Path']).joinpath(lbl_name)] for i in csv_info]
+    K_Folder = KFoldSplit(data_list_all)
+    data_list = K_Folder[2]['train']  # k folder
+    data_list_val = K_Folder[2]['val']
+    # data list
+
+    dice_result_list, label_voxel_list, precison_list, recall_list, bd_fp, bd_fn, bd_all_list = Pred3DTiled(net, data_list_val,
+                         step_size=0.5, patch_size=(128, 128, 128), min_ctnum=-1000, max_ctnum=2200,
+                         use_gaussian_weight=True, sigma_scale=1./8)
+    print('dice score:')
+    print(dice_result_list)
+    print(np.array(dice_result_list).mean())
+    print('label voxel:')
+    print([i.item() for i in label_voxel_list])
+    print(np.array(label_voxel_list).mean())
+    print('precision:')
+    print(precison_list)
+    print(np.array(precison_list).mean())
+    print('recall:')
+    print(recall_list)
+    print(np.array(recall_list).mean())
+    print('bd_all:')
+    print(bd_all_list)
+    print(np.array(bd_all_list).mean())
+    print('fp:')
+    print(bd_fp)
+    print(np.array(bd_fp).mean())
+    print('fn:')
+    print(bd_fn)
+    print(np.array(bd_fn).mean())
+
+
     #
-    # result = Pred3DTiled(net, data_list_val,
-    #                      step_size=0.5, patch_size=(128, 128, 128), min_ctnum=-1000, max_ctnum=2200,
-    #                      use_gaussian_weight=True, sigma_scale=1./8)
     # print('mean value')
     # print(np.array(result).mean())
     # # threshold
-    # pred_name = 'label_pred.npy'
+    # pred_name = 'label_pred_1mm_mask.npy'
     # label_list = [i[1] for i in data_list_val]
     # pred_list = [i.parent.joinpath(pred_name) for i in label_list]
     # pred_result = TestThreshold(label_list, pred_list, threshold_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])

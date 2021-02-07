@@ -52,6 +52,17 @@ class Normalize(object):
         img[img > 1] = 1
         return img
 
+class Zoom(object):
+    def __init__(self, ori_shape, tar_shape):
+        tmp = tuple([np.arange(j) / (j-1) * (i-1) for i, j in zip(ori_shape, tar_shape)])
+        self.coords = np.array(np.meshgrid(*tmp, indexing='ij')).astype(float)
+
+
+    def __call__(self, img, order = 0):
+        return scipy.ndimage.map_coordinates(img.astype(float), self.coords, order=order, mode='constant', cval=0.0).astype(
+            img.dtype)
+
+
 
 class RandomSpatialTransforms(object):
     '''

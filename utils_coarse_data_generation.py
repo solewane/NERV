@@ -4,6 +4,14 @@ from utils import GetDataEDAfromCSV, GetOrignalPixels, GetLabelMask
 import numpy as np
 import time
 
+
+from skimage.morphology.binary import binary_closing
+from utils_transforms import RandomBinaryOperatorTransform
+
+op = RandomBinaryOperatorTransform(p_per_sample=1.,
+                                   any_of_these=(binary_closing, binary_closing),
+                                   strel_size=3)
+
 def GenerateCoarseImage(csv_path, new_spacing=1., save_name = '1mm.npy'):
     '''
     generate coarse image and save
@@ -48,6 +56,7 @@ def GenerateCoarseMask(csv_path, new_spacing=1., save_name='1mm_mask.npy', do_di
         # mask = Dilate3D(image=mask, ori_spacing=ori_spacing, new_resolution=new_spacing)
         # time consuption:  resample -> dilate : 0.02s, dilate -> resample: 13.91s
         mask, _ = Resample(image=mask, ori_spacing=ori_spacing, new_spacing=new_spacing, interp_order=0)
+        mask = op(mask)
         if do_dilate:
             mask = Dilate3DUsingCubicKernel(image=mask, ori_spacing=new_spacing, new_resolution=new_spacing)
         save_path = Path(info['Path']).joinpath(save_name)
@@ -67,7 +76,13 @@ def GenerateCoarseMask(csv_path, new_spacing=1., save_name='1mm_mask.npy', do_di
 if __name__ == '__main__':
     csv_path = Path(r'data.csv')
     new_spacing = 1.
-    save_name = '1mm.npy'
+    # save_name = '1mm.npy'
 
     # GenerateCoarseImage(csv_path=csv_path, new_spacing=new_spacing, save_name=save_name)
-    a, b = GenerateCoarseMask(csv_path, save_name='1mm_mask_no_dilate.npy', do_dilate=False)
+    # a, b = GenerateCoarseMask(csv_path, save_name='1mm_mask_no_dilate.npy', do_dilate=False)
+
+    a, b = GenerateCoarseMask(csv_path,
+                              new_spacing=1.,
+                              save_name='1mm_mask_closing_kernel3.npy',
+                              do_dilate=False)
+
